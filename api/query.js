@@ -49,7 +49,15 @@ export default async function handler(req, res) {
       });
     });
 
-    return res.status(200).json({ data: results });
+    // --- NEW BIGINT HANDLING CODE ---
+    // Safely stringify the results, converting any BigInt to a string
+    const safeJson = JSON.stringify({ data: results }, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    );
+
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).send(safeJson);
+    // return res.status(200).json({ data: results });
 
   } catch (error) {
     console.error('Execution error:', error);
