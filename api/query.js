@@ -1,10 +1,7 @@
 // api/query.js
 import duckdb from 'duckdb';
 import fs from 'fs';
-
-// ==========================================
-// GLOBAL SCOPE (Runs once per container boot)
-// ==========================================
+import { LRUCache } from 'lru-cache';
 
 // 1. Ensure the extension directory exists once
 const extDir = '/tmp/duckdb_extensions';
@@ -12,35 +9,32 @@ if (!fs.existsSync(extDir)) {
   fs.mkdirSync(extDir, { recursive: true });
 }
 
-// 2. Create a cache to hold active database connections
-const connectionCache = new Map();
+// 2. Set up the LRU Cache for database connections
+const connectionCache = new LRUCache({
+  max: 10, // Max number of concurrent client connections to keep warm
+  ttl: 1000 * 60 * 30, // 30 minutes. If a connection sits idle, evict it.
+  
+  // THE MAGIC: This runs automatically whenever a connection is evicted from the cache!
+  dispose: (db, token) => {
+    // We only log the first 8 characters of the token for security!
+    const maskedToken = token.substring(0, 8) + '...';
+    console.log(`[Cache Cleanup] Closing connection for token ${maskedToken}. Reason: ${reason}`);
+    db.close(); 
+  }
+});
 
-// ==========================================
-// REQUEST HANDLER (Runs on every API call)
-// ==========================================
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  // --- NEW: SECURITY CHECK ---
-  // Ensure the caller provided the correct Proxy API Key
+  // Security Check
   const providedKey = req.headers['x-proxy-api-key'];
   const expectedKey = process.env.PROXY_API_KEY;
-
-  if (!expectedKey) {
-    return res.status(500).json({ error: 'Server misconfiguration: PROXY_API_KEY is not set.' });
-  }
-  if (providedKey !== expectedKey) {
-    return res.status(403).json({ error: 'Forbidden: Invalid or missing Proxy API Key.' });
-  }
-  // ---------------------------
+  if (!expectedKey) return res.status(500).json({ error: 'Server misconfiguration.' });
+  if (providedKey !== expectedKey) return res.status(403).json({ error: 'Forbidden.' });
 
   const { sql } = req.body;
-  if (!sql) {
-    return res.status(400).json({ error: 'Missing "sql" property in request body.' });
-  }
-
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header.' });
@@ -48,24 +42,22 @@ export default async function handler(req, res) {
   const token = authHeader.split(' ')[1];
 
   try {
-    // --- NEW: CONNECTION CACHING ---
+    // 3. Check our smart LRU Cache
     let db = connectionCache.get(token);
 
-    // If we don't have an active connection for this token, create and cache it
     if (!db) {
       db = await new Promise((resolve, reject) => {
         const config = { 'extension_directory': extDir };
         const database = new duckdb.Database(`md:?motherduck_token=${token}`, config, (err) => {
-          if (err) reject(new Error(`MotherDuck Auth/Connection Failed: ${err.message}`));
+          if (err) reject(new Error(`MotherDuck Auth Failed: ${err.message}`));
           else resolve(database);
         });
       });
       
+      // Save it to the cache. If this makes it 11 connections, the oldest is disposed!
       connectionCache.set(token, db);
     }
-    // -------------------------------
 
-    // Execute the query
     const results = await new Promise((resolve, reject) => {
       db.all(sql, (err, rows) => {
         if (err) reject(new Error(`Query Error: ${err.message}`));
@@ -73,7 +65,6 @@ export default async function handler(req, res) {
       });
     });
 
-    // Safely stringify the results to handle BigInts
     const safeJson = JSON.stringify({ data: results }, (key, value) =>
       typeof value === 'bigint' ? value.toString() : value
     );
@@ -84,7 +75,5 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('Execution error:', error);
     return res.status(500).json({ error: error.message });
-  } 
-  // Notice we removed the 'finally' block that closed the DB!
-  // Vercel will naturally clean up memory when the container is spun down after a period of inactivity.
+  }
 }
