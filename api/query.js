@@ -1,5 +1,6 @@
 // api/query.js
 import duckdb from 'duckdb';
+import fs from 'fs';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -11,7 +12,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing "sql" property in request body.' });
   }
 
-  // 1. Extract the token from the Authorization header (Bearer <TOKEN>)
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header.' });
@@ -20,13 +20,31 @@ export default async function handler(req, res) {
 
   let db;
   try {
-    // 2. Initialize a connection dynamically using the client's token
-    db = new duckdb.Database(`md:?motherduck_token=${token}`);
+    // 1. CRITICAL: Create a writable directory in Vercel's /tmp folder for DuckDB extensions
+    const extDir = '/tmp/duckdb_extensions';
+    if (!fs.existsSync(extDir)) {
+      fs.mkdirSync(extDir, { recursive: true });
+    }
+
+    // 2. Initialize connection, explicitly passing the new extension directory
+    db = await new Promise((resolve, reject) => {
+      const config = {
+        'extension_directory': extDir
+      };
+      
+      const database = new duckdb.Database(`md:?motherduck_token=${token}`, config, (err) => {
+        if (err) {
+          reject(new Error(`MotherDuck Auth/Connection Failed: ${err.message}`));
+        } else {
+          resolve(database);
+        }
+      });
+    });
 
     // 3. Execute the query
     const results = await new Promise((resolve, reject) => {
       db.all(sql, (err, rows) => {
-        if (err) reject(err);
+        if (err) reject(new Error(`Query Error: ${err.message}`));
         else resolve(rows);
       });
     });
@@ -34,12 +52,14 @@ export default async function handler(req, res) {
     return res.status(200).json({ data: results });
 
   } catch (error) {
-    console.error('MotherDuck execution error:', error);
+    console.error('Execution error:', error);
     return res.status(500).json({ error: error.message });
   } finally {
-    // 4. CRITICAL: Close the database to free up memory for the next client
+    // 4. Safely close the database connection
     if (db) {
-      await new Promise((resolve) => db.close(resolve));
+      await new Promise((resolve) => {
+        db.close(() => resolve()); // We resolve immediately even if closing throws an error
+      });
     }
   }
 }
