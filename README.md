@@ -80,7 +80,7 @@ Successful queries return a 200 OK with a data array containing the rows.
 }
 ```
 
-## 🛠️ Developer Guide (For Maintainers)
+## 🛠️ Developer Guide
 
 This project is designed to be deployed to Vercel as a pure Serverless API Function. It does not require a build step.
 
