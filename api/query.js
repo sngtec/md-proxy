@@ -33,8 +33,9 @@ export default async function handler(req, res) {
   const expectedKey = process.env.PROXY_API_KEY;
   if (!expectedKey) return res.status(500).json({ error: 'Server misconfiguration.' });
   if (providedKey !== expectedKey) return res.status(403).json({ error: 'Forbidden.' });
-// We now accept 'params' and an optional 'method' ('all', 'exec', or 'batch')
-  const { sql, params = [], method = 'all' } = req.body;
+
+  // We now accept 'params' and an optional 'method' ('all', 'exec', or 'batch')
+  const { sql, params = [], method = 'all', db: dbName } = req.body;
   if (!sql) {
     return res.status(400).json({ error: 'Missing "sql" property in request body.' });
   }
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
     if (!db) {
       db = await new Promise((resolve, reject) => {
         const config = { 'extension_directory': extDir };
-        const database = new duckdb.Database(`md:?motherduck_token=${token}`, config, (err) => {
+        const database = new duckdb.Database(`md:${dbName}?motherduck_token=${token}`, config, (err) => {
           if (err) reject(new Error(`MotherDuck Auth Failed: ${err.message}`));
           else resolve(database);
         });
