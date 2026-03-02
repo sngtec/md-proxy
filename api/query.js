@@ -52,7 +52,7 @@ export default async function handler(req, res) {
     if (!db) {
       db = await new Promise((resolve, reject) => {
         const config = { 'extension_directory': extDir };
-        const database = new duckdb.Database(`md:${dbName}?motherduck_token=${token}`, config, (err) => {
+        const database = new duckdb.Database(`md:${dbName || ""}?motherduck_token=${token}`, config, (err) => {
           if (err) reject(new Error(`MotherDuck Auth Failed: ${err.message}`));
           else resolve(database);
         });

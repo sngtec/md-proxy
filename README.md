@@ -80,6 +80,16 @@ Successful queries return a 200 OK with a data array containing the rows.
 }
 ```
 
+#### Database name
+
+Use `db` parameter to specify db name. If not specified, default database will be used. Example:
+
+```json
+{
+    "sql": "SELECT * FROM 1",
+    "db": "my_db"
+}
+
 ## 🛠️ Developer Guide
 
 This project is designed to be deployed to Vercel as a pure Serverless API Function. It does not require a build step.
