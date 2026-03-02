@@ -46,8 +46,10 @@ export default async function handler(req, res) {
   }
   const token = authHeader.split(' ')[1];
 
+  const connectionCacheKey = `${token}-${dbName}`;
+
   try {
-    let db = connectionCache.get(token);
+    let db = connectionCache.get(connectionCacheKey);
 
     if (!db) {
       db = await new Promise((resolve, reject) => {
@@ -57,7 +59,7 @@ export default async function handler(req, res) {
           else resolve(database);
         });
       });
-      connectionCache.set(token, db);
+      connectionCache.set(connectionCacheKey, db);
     }
 
     let results;
