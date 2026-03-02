@@ -33,8 +33,12 @@ export default async function handler(req, res) {
   const expectedKey = process.env.PROXY_API_KEY;
   if (!expectedKey) return res.status(500).json({ error: 'Server misconfiguration.' });
   if (providedKey !== expectedKey) return res.status(403).json({ error: 'Forbidden.' });
+// We now accept 'params' and an optional 'method' ('all', 'exec', or 'batch')
+  const { sql, params = [], method = 'all' } = req.body;
+  if (!sql) {
+    return res.status(400).json({ error: 'Missing "sql" property in request body.' });
+  }
 
-  const { sql } = req.body;
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header.' });
@@ -42,7 +46,6 @@ export default async function handler(req, res) {
   const token = authHeader.split(' ')[1];
 
   try {
-    // 3. Check our smart LRU Cache
     let db = connectionCache.get(token);
 
     if (!db) {
@@ -53,18 +56,49 @@ export default async function handler(req, res) {
           else resolve(database);
         });
       });
-      
-      // Save it to the cache. If this makes it 11 connections, the oldest is disposed!
       connectionCache.set(token, db);
     }
 
-    const results = await new Promise((resolve, reject) => {
-      db.all(sql, (err, rows) => {
-        if (err) reject(new Error(`Query Error: ${err.message}`));
-        else resolve(rows);
-      });
-    });
+    let results;
 
+    if (method === 'batch') {
+      // 1. High-speed batching using a Prepared Statement
+      results = await new Promise((resolve, reject) => {
+        const stmt = db.prepare(sql);
+        
+        for (const row of params) {
+          // Ensure each row is spread as individual arguments
+          const rowArgs = Array.isArray(row) ? row : [row];
+          stmt.run(...rowArgs); 
+        }
+        
+        stmt.finalize((err) => {
+          if (err) reject(new Error(`Batch Error: ${err.message}`));
+          else resolve({ message: `Successfully executed batch of ${params.length} queries.` });
+        });
+      });
+
+    } else if (method === 'exec') {
+      // 2. Multi-statement raw scripts (no parameters allowed here)
+      results = await new Promise((resolve, reject) => {
+        db.exec(sql, (err) => {
+          if (err) reject(new Error(`Exec Error: ${err.message}`));
+          else resolve({ message: 'Multi-statement script executed successfully.' });
+        });
+      });
+
+    } else {
+      // 3. Default: Single query with or without parameters
+      results = await new Promise((resolve, reject) => {
+        // We spread the params array into the function arguments
+        db.all(sql, ...params, (err, rows) => {
+          if (err) reject(new Error(`Query Error: ${err.message}`));
+          else resolve(rows);
+        });
+      });
+    }
+
+    // Safely stringify the results to handle BigInts
     const safeJson = JSON.stringify({ data: results }, (key, value) =>
       typeof value === 'bigint' ? value.toString() : value
     );
