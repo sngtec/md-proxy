@@ -14,14 +14,19 @@ const connectionCache = new LRUCache({
   max: 10, // Max number of concurrent client connections to keep warm
   ttl: 1000 * 60 * 30, // 30 minutes. If a connection sits idle, evict it.
 
-  // THE MAGIC: This runs automatically whenever a connection is evicted from the cache!
-  dispose: (db, token) => {
-    // We only log the first 8 characters of the token for security!
-    const maskedToken = token.substring(0, 8) + "...";
+  // This runs automatically whenever a connection is evicted from the cache!
+  dispose: (db, connectionCacheKey, reason) => {
+    // We only log the first 12 characters of the token for security!
+    const maskedToken = connectionCacheKey.substring(0, 12) + "...";
     console.log(
       `[Cache Cleanup] Closing connection for token ${maskedToken}. Reason: ${reason}`,
     );
-    db.close();
+    db.close((err) => {
+      if (err)
+        console.error(
+          `[Cache Cleanup] Error closing connection: ${err.message}`,
+        );
+    });
   },
 });
 
