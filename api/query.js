@@ -136,7 +136,11 @@ export default async function handler(req, res) {
 
     // Safely stringify the results to handle BigInts
     const safeJson = JSON.stringify({ data: results }, (key, value) =>
-      typeof value === "bigint" ? value.toString() : value,
+      typeof value === "bigint"
+        ? value <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(value)
+          : value.toString()
+        : value,
     );
 
     res.setHeader("Content-Type", "application/json");
