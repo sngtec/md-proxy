@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "build": "exit 0"
   },
   "keywords": [],
@@ -13,5 +13,8 @@
   "dependencies": {
     "@duckdb/node-api": "1.4.4-r.3",
     "lru-cache": "^11.2.6"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }
