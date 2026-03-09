@@ -1,5 +1,5 @@
 // api/query.js
-import duckdb from "duckdb";
+import { DuckDBInstance } from "@duckdb/node-api";
 import fs from "fs";
 import { LRUCache } from "lru-cache";
 
@@ -9,24 +9,25 @@ if (!fs.existsSync(extDir)) {
   fs.mkdirSync(extDir, { recursive: true });
 }
 
-// 2. Set up the LRU Cache for database connections
-const connectionCache = new LRUCache({
+// 2. Set up the LRU Cache for DuckDB instances
+const instanceCache = new LRUCache({
   max: 10, // Max number of concurrent client connections to keep warm
   ttl: 1000 * 60 * 30, // 30 minutes. If a connection sits idle, evict it.
 
-  // This runs automatically whenever a connection is evicted from the cache!
-  dispose: (db, connectionCacheKey, reason) => {
+  // This runs automatically whenever an instance is evicted from the cache!
+  dispose: (instance, cacheKey, reason) => {
     // We only log the first 12 characters of the token for security!
-    const maskedToken = connectionCacheKey.substring(0, 12) + "...";
+    const maskedToken = cacheKey.substring(0, 12) + "...";
     console.log(
-      `[Cache Cleanup] Closing connection for token ${maskedToken}. Reason: ${reason}`,
+      `[Cache Cleanup] Closing instance for token ${maskedToken}. Reason: ${reason}`,
     );
-    db.close((err) => {
-      if (err)
-        console.error(
-          `[Cache Cleanup] Error closing connection: ${err.message}`,
-        );
-    });
+    try {
+      instance.closeSync();
+    } catch (err) {
+      console.error(
+        `[Cache Cleanup] Error closing instance: ${err.message}`,
+      );
+    }
   },
 });
 
@@ -44,7 +45,11 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Forbidden." });
 
   // We now accept 'params' and an optional 'method' ('all', 'exec', or 'batch')
-  const { sql, params = [], method = "all", db: dbName } = req.body;
+  const { sql, params, method = "all", db: dbName } = req.body;
+  // params can be an array (positional) or an object (named), default to empty array
+  const resolvedParams = params ?? [];
+  const isNamedParams =
+    resolvedParams && !Array.isArray(resolvedParams) && typeof resolvedParams === "object";
   if (!sql) {
     return res
       .status(400)
@@ -59,36 +64,27 @@ export default async function handler(req, res) {
   }
   const token = authHeader.split(" ")[1];
 
-  const connectionCacheKey = `${token}-${dbName}`;
+  const cacheKey = `${token}-${dbName}`;
 
   try {
-    let db = connectionCache.get(connectionCacheKey);
+    let instance = instanceCache.get(cacheKey);
 
-    if (!db) {
-      db = await new Promise((resolve, reject) => {
-        const config = { extension_directory: extDir };
-        const database = new duckdb.Database(
-          `md:${dbName || ""}?motherduck_token=${token}`,
-          config,
-          (err) => {
-            if (err)
-              reject(new Error(`MotherDuck Auth Failed: ${err.message}`));
-            else resolve(database);
-          },
-        );
-      });
-      connectionCache.set(connectionCacheKey, db);
+    if (!instance) {
+      instance = await DuckDBInstance.create(
+        `md:${dbName || ""}?motherduck_token=${token}`,
+        { extension_directory: extDir },
+      );
+      instanceCache.set(cacheKey, instance);
     }
 
+    const connection = await instance.connect();
     let results;
 
-    if (method === "batch") {
-      // 1. High-speed batching using a Prepared Statement
-      results = await new Promise((resolve, reject) => {
-        const stmt = db.prepare(sql);
+    try {
+      if (method === "batch") {
+        // 1. High-speed batching: compile once, run per row
 
-        for (const row of params) {
-          // Ensure each row is spread as individual arguments
+        for (const row of resolvedParams) {
           const rowArgs = Array.isArray(row) ? row : [row];
 
           // Convert JS arrays to DuckDB list literals
@@ -101,37 +97,31 @@ export default async function handler(req, res) {
             });
             return `[${items.join(", ")}]`;
           });
-          stmt.run(...processedArgs);
+
+          await connection.run(sql, processedArgs);
         }
 
-        stmt.finalize((err) => {
-          if (err) reject(new Error(`Batch Error: ${err.message}`));
-          else
-            resolve({
-              message: `Successfully executed batch of ${params.length} queries.`,
-            });
-        });
-      });
-    } else if (method === "exec") {
-      // 2. Multi-statement raw scripts (no parameters allowed here)
-      results = await new Promise((resolve, reject) => {
-        db.exec(sql, (err) => {
-          if (err) reject(new Error(`Exec Error: ${err.message}`));
-          else
-            resolve({
-              message: "Multi-statement script executed successfully.",
-            });
-        });
-      });
-    } else {
-      // 3. Default: Single query with or without parameters
-      results = await new Promise((resolve, reject) => {
-        // We spread the params array into the function arguments
-        db.all(sql, ...params, (err, rows) => {
-          if (err) reject(new Error(`Query Error: ${err.message}`));
-          else resolve(rows);
-        });
-      });
+        results = {
+          message: `Successfully executed batch of ${resolvedParams.length} queries.`,
+        };
+      } else if (method === "exec") {
+        // 2. Multi-statement raw scripts (no parameters allowed here)
+        await connection.run(sql);
+        results = {
+          message: "Multi-statement script executed successfully.",
+        };
+      } else {
+        // 3. Default: Single query with or without parameters
+        // Supports both positional ($1, $2, ... with array) and named ($name with object)
+        const hasParams = isNamedParams || resolvedParams.length > 0;
+        const reader = await connection.runAndReadAll(
+          sql,
+          ...(hasParams ? [resolvedParams] : []),
+        );
+        results = reader.getRowObjectsJson();
+      }
+    } finally {
+      connection.closeSync();
     }
 
     // Safely stringify the results to handle BigInts

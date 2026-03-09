@@ -29,13 +29,21 @@ To make a request, you must provide both the client's MotherDuck service token a
 The proxy supports three different methods of executing SQL.
 
 #### 1. Standard Query (Default)
-Use this for `SELECT` statements or single updates. You can safely pass parameters using the `?` placeholder to prevent SQL injection.
+Use this for `SELECT` statements or single updates. You can pass parameters to prevent SQL injection.
 
-**Request:**
+**Positional parameters** — use `$1, $2, ...` placeholders with a `params` array:
 ```json
 {
-  "sql": "SELECT * FROM users WHERE status = ? AND age > ?",
+  "sql": "SELECT * FROM users WHERE status = $1 AND age > $2",
   "params": ["active", 21]
+}
+```
+
+**Named parameters** — use `$name` placeholders with a `params` object:
+```json
+{
+  "sql": "SELECT * FROM users WHERE status = $status AND age > $min_age",
+  "params": { "status": "active", "min_age": 21 }
 }
 ```
 
@@ -47,7 +55,7 @@ Use this for high-speed, bulk inserts or updates. It utilizes DuckDB prepared st
 ```json
 {
   "method": "batch",
-  "sql": "INSERT INTO my_table (id, name) VALUES (?, ?)",
+  "sql": "INSERT INTO my_table (id, name) VALUES ($1, $2)",
   "params": [
     [1, "Alice"],
     [2, "Bob"],
