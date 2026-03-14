@@ -97,6 +97,40 @@ Use `db` parameter to specify db name. If not specified, default database will b
     "sql": "SELECT * FROM 1",
     "db": "my_db"
 }
+```
+
+---
+
+### Export Endpoint
+
+**Endpoint:** `POST https://<your-vercel-domain>.vercel.app/api/export`
+
+Use this endpoint to export query results to S3 and receive a presigned download URL. The result file is written directly from MotherDuck via DuckDB's `COPY TO` S3 support — no size limits apply.
+
+**Request:**
+```json
+{
+  "sql": "SELECT * FROM my_table WHERE created_at > '2024-01-01'",
+  "format": "csv",
+  "db": "my_db"
+}
+```
+
+| Field    | Required | Default | Description                              |
+|----------|----------|---------|------------------------------------------|
+| `sql`    | ✅       | —       | The SELECT query to export               |
+| `format` | ❌       | `csv`   | Export format: `csv`, `parquet`, or `json` |
+| `db`     | ❌       | —       | Database name (same as query endpoint)   |
+
+**Response:**
+```json
+{
+  "url": "https://s3.eu-central-1.amazonaws.com/my-bucket/exports/abc123.csv?X-Amz-..."
+}
+```
+
+The URL is a presigned S3 GET URL valid for **5 minutes**. The client can open it directly to download the file.
+
 
 ## 🛠️ Developer Guide
 
@@ -129,6 +163,25 @@ Deploy directly to production:
 Go to your Vercel Dashboard -> Project -> Settings -> Environment Variables.
 
 Add a new variable named PROXY_API_KEY and set it to a secure, random string.
+
+For the **export endpoint**, also add:
+
+| Variable               | Required | Description                                          |
+|------------------------|----------|------------------------------------------------------|
+| `EXPORT_S3_BUCKET`     | ✅       | S3 bucket name for exports                           |
+| `EXPORT_S3_REGION`     | ❌       | AWS region (default: `eu-central-1`)                 |
+| `AWS_ACCESS_KEY_ID`    | ✅       | AWS credentials for S3 writes and presigned URLs     |
+| `AWS_SECRET_ACCESS_KEY`| ✅       | AWS credentials for S3 writes and presigned URLs     |
+
+> **Tip:** Set a lifecycle rule on the S3 bucket to auto-delete objects under the `exports/` prefix after ~1 hour.
+
+```
+aws s3 mb s3://your-bucket --region eu-central-1 --profile md-proxy
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket your-bucket \
+  --lifecycle-configuration file://s3-lifecycle.json \
+  --profile md-proxy
+```
 
 Redeploy the project to apply the environment variables.
 

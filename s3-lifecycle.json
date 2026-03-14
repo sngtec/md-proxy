@@ -1,0 +1,14 @@
+{
+  "Rules": [
+    {
+      "ID": "AutoDeleteExports",
+      "Filter": {
+        "Prefix": "exports/"
+      },
+      "Status": "Enabled",
+      "Expiration": {
+        "Days": 1
+      }
+    }
+  ]
+}

@@ -1,35 +1,5 @@
 // api/query.js
-import { DuckDBInstance } from "@duckdb/node-api";
-import fs from "fs";
-import { LRUCache } from "lru-cache";
-
-// 1. Ensure the extension directory exists once
-const extDir = "/tmp/duckdb_extensions";
-if (!fs.existsSync(extDir)) {
-  fs.mkdirSync(extDir, { recursive: true });
-}
-
-// 2. Set up the LRU Cache for DuckDB instances
-const instanceCache = new LRUCache({
-  max: 10, // Max number of concurrent client connections to keep warm
-  ttl: 1000 * 60 * 30, // 30 minutes. If a connection sits idle, evict it.
-
-  // This runs automatically whenever an instance is evicted from the cache!
-  dispose: (instance, cacheKey, reason) => {
-    // We only log the first 12 characters of the token for security!
-    const maskedToken = cacheKey.substring(0, 12) + "...";
-    console.log(
-      `[Cache Cleanup] Closing instance for token ${maskedToken}. Reason: ${reason}`,
-    );
-    try {
-      instance.closeSync();
-    } catch (err) {
-      console.error(
-        `[Cache Cleanup] Error closing instance: ${err.message}`,
-      );
-    }
-  },
-});
+import { getOrCreateInstance } from "./instanceCache.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -64,19 +34,8 @@ export default async function handler(req, res) {
   }
   const token = authHeader.split(" ")[1];
 
-  const cacheKey = `${token}-${dbName}`;
-
   try {
-    let instance = instanceCache.get(cacheKey);
-
-    if (!instance) {
-      instance = await DuckDBInstance.create(
-        `md:${dbName || ""}?motherduck_token=${token}`,
-        { extension_directory: extDir },
-      );
-      instanceCache.set(cacheKey, instance);
-    }
-
+    const instance = await getOrCreateInstance(token, dbName);
     const connection = await instance.connect();
     let results;
 

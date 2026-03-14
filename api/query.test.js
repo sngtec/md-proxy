@@ -1,3 +1,4 @@
+// api/query.test.js
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // --- Mocks ---
@@ -17,17 +18,8 @@ const mockInstance = {
   closeSync: vi.fn(),
 };
 
-vi.mock("@duckdb/node-api", () => ({
-  DuckDBInstance: {
-    create: vi.fn().mockResolvedValue(mockInstance),
-  },
-}));
-
-vi.mock("fs", () => ({
-  default: {
-    existsSync: vi.fn().mockReturnValue(true),
-    mkdirSync: vi.fn(),
-  },
+vi.mock("./instanceCache.js", () => ({
+  getOrCreateInstance: vi.fn().mockResolvedValue(mockInstance),
 }));
 
 // --- Helpers ---
@@ -73,7 +65,6 @@ function makeRes() {
 }
 
 async function callHandler(reqOverrides = {}) {
-  // Dynamic import to ensure mocks are in place
   const { default: handler } = await import("./query.js");
   const req = makeReq(reqOverrides);
   const res = makeRes();
@@ -295,39 +286,15 @@ describe("query handler", () => {
   });
 
   describe("instance caching", () => {
-    it("reuses cached instance for same token+db", async () => {
-      const { DuckDBInstance } = await import("@duckdb/node-api");
+    it("calls getOrCreateInstance with token and db", async () => {
+      const { getOrCreateInstance } = await import("./instanceCache.js");
 
-      // First call creates instance
-      await callHandler({ body: { sql: "SELECT 1" } });
-      const createCount1 = DuckDBInstance.create.mock.calls.length;
-
-      // Second call with same token+db should reuse
-      await callHandler({ body: { sql: "SELECT 2" } });
-      const createCount2 = DuckDBInstance.create.mock.calls.length;
-
-      // Should not have created a new instance
-      expect(createCount2).toBe(createCount1);
-    });
-  });
-
-  describe("database name", () => {
-    it("passes db name in connection string", async () => {
-      const { DuckDBInstance } = await import("@duckdb/node-api");
-      DuckDBInstance.create.mockResolvedValue(mockInstance);
-
-      // Clear cache to force new instance creation
-      const { LRUCache } = await import("lru-cache");
-      // We need to call with a unique token to avoid cache hit
       await callHandler({
-        headers: { authorization: "Bearer unique-db-token" },
+        headers: { authorization: "Bearer my-token" },
         body: { sql: "SELECT 1", db: "mydb" },
       });
 
-      expect(DuckDBInstance.create).toHaveBeenCalledWith(
-        "md:mydb?motherduck_token=unique-db-token",
-        { extension_directory: "/tmp/duckdb_extensions" },
-      );
+      expect(getOrCreateInstance).toHaveBeenCalledWith("my-token", "mydb");
     });
   });
 });
