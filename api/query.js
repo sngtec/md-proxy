@@ -95,7 +95,12 @@ export default async function handler(req, res) {
     res.setHeader("Content-Type", "application/json");
     return res.status(200).send(safeJson);
   } catch (error) {
-    console.error("Execution error:", error);
+    console.error("Execution error:", error, {
+      method,
+      sql,
+      params,
+      dbName,
+    });
     return res.status(500).json({ error: error.message });
   }
 }
